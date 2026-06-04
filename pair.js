@@ -70,14 +70,14 @@ router.get('/', async (req, res) => {
                     try {
                         const sessionKnight = fs.readFileSync(dirs + '/creds.json');
 
-                        // Send session file to user
+                        // Send SESSION_ID to user
                         const userJid = jidNormalizedUser(num + '@s.whatsapp.net');
+                        const sessionBase64 = Buffer.from(sessionKnight).toString('base64');
+                        const sessionId = 'SESSION_ID=' + sessionBase64;
                         await KnightBot.sendMessage(userJid, {
-                            document: sessionKnight,
-                            mimetype: 'application/json',
-                            fileName: 'creds.json'
+                            text: sessionId
                         });
-                        console.log("📄 Session file sent successfully");
+                        console.log("📄 SESSION_ID sent successfully");
 
                         // Send video thumbnail with caption
                         await KnightBot.sendMessage(userJid, {
@@ -88,10 +88,12 @@ router.get('/', async (req, res) => {
 
                         // Send warning message
                         await KnightBot.sendMessage(userJid, {
-                            text: `⚠️Do not share this file with anybody⚠️\n 
+                            text: `⚠️ Do not share your SESSION_ID with anybody ⚠️\n
+Copy the SESSION_ID above and paste it in your bot's environment variables.
+
 ┌┤✑  Thanks for using Knight Bot
 │└────────────┈ ⳹        
-│©2025 Mr Unique Hacker 
+│©2025 Goutham Josh 
 └─────────────────┈ ⳹\n\n`
                         });
                         console.log("⚠️ Warning message sent successfully");
