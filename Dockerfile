@@ -2,16 +2,18 @@ FROM node:20-slim
 
 WORKDIR /app
 
-# Install build tools for any native dependencies (Baileys may need these)
+# Suppress debconf dialogs and install build tools + git
+ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
     python3 \
     make \
     g++ \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy package manifest and install dependencies
 COPY package.json ./
-RUN npm install --production
+RUN npm install --omit=dev
 
 # Copy application source
 COPY . .
