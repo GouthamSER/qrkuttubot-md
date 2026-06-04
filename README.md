@@ -1,6 +1,6 @@
-# **Knight Bot Session Generator**
+# **Kuttu Bot Session Generator**
 
-[![Generate Pair Code](https://img.shields.io/badge/Generate%20Pair%20Code-Click%20Here-brightgreen?style=for-the-badge)](https://knight-bot-paircode.onrender.com)
+[![Generate Pair Code](https://img.shields.io/badge/Generate%20Pair%20Code-Click%20Here-brightgreen?style=for-the-badge)](https://qrkuttubot-md.koyeb.app/)
 
 ---
 
@@ -23,4 +23,5 @@ const auth = {
 
 - **3) Deploy to Render**  
   [![Render - Deploy](https://img.shields.io/badge/Render-Deploy%20Web%20Service-46E3B7?logo=render&logoColor=white)](https://render.com)
-  
+- **4) Deploy to Koyeb**  
+  [![Koyeb - Deploy](https://img.shields.io/badge/Koyeb-Deploy%20Web%20Service-46E3B7?logo=Koyeb&logoColor=white)](https://koyeb.com)
