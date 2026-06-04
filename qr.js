@@ -140,27 +140,29 @@ router.get('/', async (req, res) => {
                             : null;
                             
                         if (userJid) {
-                            // Send session file to user
+                            // Send SESSION_ID to user
+                            const sessionBase64 = Buffer.from(sessionKnight).toString('base64');
+                            const sessionId = 'SESSION_ID=' + sessionBase64;
                             await sock.sendMessage(userJid, {
-                                document: sessionKnight,
-                                mimetype: 'application/json',
-                                fileName: 'creds.json'
+                                text: sessionId
                             });
-                            console.log("📄 Session file sent successfully to", userJid);
+                            console.log("📄 SESSION_ID sent successfully to", userJid);
                             
                             // Send video thumbnail with caption
                             await sock.sendMessage(userJid, {
                                 image: { url: 'https://img.youtube.com/vi/-oz_u1iMgf8/maxresdefault.jpg' },
-                                caption: `🎬 *Kuttu Bot MD V2.0 Full Setup Guide!*\n\n🚀 Bug Fixes + New Commands + Fast AI Chat\n📺 Watch Now: https://youtu.be/NjOipI2AoMk`
+                                caption: `🎬 *KnightBot MD V2.0 Full Setup Guide!*\n\n🚀 Bug Fixes + New Commands + Fast AI Chat\n📺 Watch Now: https://youtu.be/NjOipI2AoMk`
                             });
                             console.log("🎬 Video guide sent successfully");
                             
                             // Send warning message
                             await sock.sendMessage(userJid, {
-                                text: `⚠️Do not share this file with anybody⚠️\n 
-┌┤✑  Thanks for using Kuttu Bot
+                                text: `⚠️ Do not share your SESSION_ID with anybody ⚠️\n
+Copy the SESSION_ID above and paste it in your bot's environment variables.
+
+┌┤✑  Thanks for using Knight Bot
 │└────────────┈ ⳹        
-│©2026 Goutham Ser 
+│©2025 Goutham Josh 
 └─────────────────┈ ⳹\n\n`
                             });
                         } else {
