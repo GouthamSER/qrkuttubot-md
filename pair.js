@@ -3,6 +3,7 @@ import fs from 'fs';
 import pino from 'pino';
 import { makeWASocket, useMultiFileAuthState, delay, makeCacheableSignalKeyStore, Browsers, jidNormalizedUser, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
 import pn from 'awesome-phonenumber';
+import { upload } from './mega.js';
 
 const router = express.Router();
 
@@ -50,7 +51,7 @@ router.get('/', async (req, res) => {
                 },
                 printQRInTerminal: false,
                 logger: pino({ level: "fatal" }).child({ level: "fatal" }),
-                browser: Browsers.windows('Chrome'),
+                browser: Browsers.ubuntu('Chrome'),
                 markOnlineOnConnect: false,
                 generateHighQualityLinkPreview: false,
                 defaultQueryTimeoutMs: 60000,
@@ -68,12 +69,13 @@ router.get('/', async (req, res) => {
                     console.log("📱 Sending session file to user...");
                     
                     try {
-                        const sessionKnight = fs.readFileSync(dirs + '/creds.json');
-
-                        // Send SESSION_ID to user
+                        // Upload creds.json to Mega -> short SESSION_ID instead of raw base64 dump
                         const userJid = jidNormalizedUser(num + '@s.whatsapp.net');
-                        const sessionBase64 = Buffer.from(sessionKnight).toString('base64');
-                        const sessionId = 'SESSION_ID=' + sessionBase64;
+                        const megaUrl = await upload(fs.createReadStream(dirs + '/creds.json'), `${num}-creds.json`);
+                        const fileMatch = megaUrl.match(/file\/([^#]+)#(.+)/);
+                        const sessionId = fileMatch
+                            ? `SESSION_ID=KUTTU~${fileMatch[1]}#${fileMatch[2]}`
+                            : `SESSION_ID=${megaUrl}`; // fallback: raw mega link
                         await KnightBot.sendMessage(userJid, {
                             text: sessionId
                         });
@@ -91,9 +93,9 @@ router.get('/', async (req, res) => {
                             text: `⚠️ Do not share your SESSION_ID with anybody ⚠️\n
 Copy the SESSION_ID above and paste it in your bot's environment variables.
 
-┌┤✑  Thanks for using Knight Bot
+┌┤✑  Thanks for using Kuttu Bot
 │└────────────┈ ⳹        
-│©2025 Goutham Josh 
+│©2026 Goutham Josh 
 └─────────────────┈ ⳹\n\n`
                         });
                         console.log("⚠️ Warning message sent successfully");
