@@ -5,6 +5,7 @@ import { makeWASocket, useMultiFileAuthState, makeCacheableSignalKeyStore, Brows
 import { delay } from '@whiskeysockets/baileys';
 import QRCode from 'qrcode';
 import qrcodeTerminal from 'qrcode-terminal';
+import zlib from 'zlib'; // <-- Added for compression
 
 const router = express.Router();
 
@@ -53,8 +54,7 @@ router.get('/', async (req, res) => {
                 console.log('2. Go to Settings > Linked Devices');
                 console.log('3. Tap "Link a Device"');
                 console.log('4. Scan the QR code below');
-                // Display QR in terminal
-                //qrcodeTerminal.generate(qr, { small: true });
+                
                 try {
                     // Generate QR code as data URL
                     const qrDataURL = await QRCode.toDataURL(qr, {
@@ -129,10 +129,8 @@ router.get('/', async (req, res) => {
                     reconnectAttempts = 0; // Reset reconnect attempts on successful connection
                     
                     try {
-                        
-                        
                         // Read the session file
-                        const sessionKnight = fs.readFileSync(dirs + '/creds.json');
+                        const sessionData = fs.readFileSync(dirs + '/creds.json');
                         
                         // Get the user's JID from the session
                         const userJid = Object.keys(sock.authState.creds.me || {}).length > 0 
@@ -140,9 +138,11 @@ router.get('/', async (req, res) => {
                             : null;
                             
                         if (userJid) {
-                            // Send SESSION_ID to user
-                            const sessionBase64 = Buffer.from(sessionKnight).toString('base64');
-                            const sessionId = 'SESSION_ID=' + sessionBase64;
+                            // Compress, encode, and format as KuttuBotMD session
+                            const compressedSession = zlib.gzipSync(sessionData);
+                            const sessionBase64 = compressedSession.toString('base64');
+                            const sessionId = 'KuttuBotMD!' + sessionBase64;
+                            
                             await sock.sendMessage(userJid, {
                                 text: sessionId
                             });
@@ -151,7 +151,7 @@ router.get('/', async (req, res) => {
                             // Send video thumbnail with caption
                             await sock.sendMessage(userJid, {
                                 image: { url: 'https://img.youtube.com/vi/-oz_u1iMgf8/maxresdefault.jpg' },
-                                caption: `🎬 *KnightBot MD V2.0 Full Setup Guide!*\n\n🚀 Bug Fixes + New Commands + Fast AI Chat\n📺 Watch Now: https://youtu.be/NjOipI2AoMk`
+                                caption: `🎬 *KuttuBot MD Full Setup Guide!*\n\n🚀 Bug Fixes + New Commands + Fast AI Chat\n📺 Watch Now: https://youtu.be/NjOipI2AoMk`
                             });
                             console.log("🎬 Video guide sent successfully");
                             
@@ -160,7 +160,7 @@ router.get('/', async (req, res) => {
                                 text: `⚠️ Do not share your SESSION_ID with anybody ⚠️\n
 Copy the SESSION_ID above and paste it in your bot's environment variables.
 
-┌┤✑  Thanks for using Knight Bot
+┌┤✑  Thanks for using KuttuBot MD
 │└────────────┈ ⳹        
 │©2025 Goutham Josh 
 └─────────────────┈ ⳹\n\n`
