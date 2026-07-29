@@ -5,7 +5,7 @@ import { makeWASocket, useMultiFileAuthState, makeCacheableSignalKeyStore, Brows
 import { delay } from '@whiskeysockets/baileys';
 import QRCode from 'qrcode';
 import qrcodeTerminal from 'qrcode-terminal';
-import { saveSession } from './db.js';
+import { saveSession, loadSession } from './db.js';
 
 const router = express.Router();
 
@@ -19,6 +19,18 @@ const activeSockets = new Map();
 router.get('/status/:key', (req, res) => {
     const s = linkStatus.get(req.params.key);
     res.send(s || { status: 'unknown' });
+});
+
+// Public endpoint the MAIN BOT calls to fetch its session — this is the only
+// place that needs MONGODB_URI. Main bot just does a plain https GET here,
+// no mongo driver/uri needed on that side at all.
+router.get('/session/:token', async (req, res) => {
+    try {
+        const creds = await loadSession(req.params.token);
+        res.send({ creds });
+    } catch (e) {
+        res.status(404).send({ error: e.message });
+    }
 });
 
 router.get('/cancel/:key', (req, res) => {
