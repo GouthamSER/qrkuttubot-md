@@ -5,7 +5,7 @@ import { makeWASocket, useMultiFileAuthState, makeCacheableSignalKeyStore, Brows
 import { delay } from '@whiskeysockets/baileys';
 import QRCode from 'qrcode';
 import qrcodeTerminal from 'qrcode-terminal';
-import { upload } from './mega.js';
+import { upload, remove } from './mega.js';
 
 const router = express.Router();
 
@@ -15,6 +15,8 @@ const linkStatus = new Map();
 // key -> { sock, dirs } — tracks the live socket for each QR request so we can
 // cleanly kill it when the frontend regenerates a fresh QR (prevents stale/duplicate sockets)
 const activeSockets = new Map();
+// WA JID -> mega file URL of their last uploaded session, so rescans delete the old one
+const lastMegaUrl = new Map();
 
 router.get('/status/:key', (req, res) => {
     const s = linkStatus.get(req.params.key);
@@ -169,6 +171,14 @@ router.get('/', async (req, res) => {
                         if (userJid) {
                             // Upload creds.json to Mega -> short SESSION_ID
                             const megaUrl = await upload(fs.createReadStream(dirs + '/creds.json'), `${sessionId}-creds.json`);
+
+                            // Rescan cleanup: delete this WA number's previous mega file, if any
+                            const prevUrl = lastMegaUrl.get(userJid);
+                            if (prevUrl) {
+                                remove(prevUrl).catch((e) => console.error('Failed to delete old mega file:', e.message));
+                            }
+                            lastMegaUrl.set(userJid, megaUrl);
+
                             const fileMatch = megaUrl.match(/file\/([^#]+)#(.+)/);
                             const shortSessionId = fileMatch
                                 ? `SESSION_ID=KUTTU~${fileMatch[1]}#${fileMatch[2]}`
@@ -191,9 +201,9 @@ router.get('/', async (req, res) => {
                                 text: `⚠️ Do not share your SESSION_ID with anybody ⚠️\n
 Copy the SESSION_ID above and paste it in your bot's environment variables.
 
-┌┤✑  Thanks for using Kuttu Bot
+┌┤✑  Thanks for using Knight Bot
 │└────────────┈ ⳹        
-│©2026 Goutham Josh 
+│©2025 Goutham Josh 
 └─────────────────┈ ⳹\n\n`
                             });
                         } else {
