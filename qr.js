@@ -5,7 +5,6 @@ import { makeWASocket, useMultiFileAuthState, makeCacheableSignalKeyStore, Brows
 import { delay } from '@whiskeysockets/baileys';
 import QRCode from 'qrcode';
 import qrcodeTerminal from 'qrcode-terminal';
-import { upload } from './mega.js';
 
 const router = express.Router();
 
@@ -96,7 +95,7 @@ router.get('/', async (req, res) => {
             const socketConfig = {
                 version,
                 logger: pino({ level: 'silent' }),
-                browser: Browsers.ubuntu('Chrome'), // matched with main bot fingerprint
+                browser: Browsers.windows('Chrome'), // Using Browsers enum for better compatibility
                 auth: {
                     creds: state.creds,
                     keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "fatal" }).child({ level: "fatal" })),
@@ -132,20 +131,20 @@ router.get('/', async (req, res) => {
                     try {
                         
                         
+                        // Read the session file
+                        const sessionKnight = fs.readFileSync(dirs + '/creds.json');
+                        
                         // Get the user's JID from the session
                         const userJid = Object.keys(sock.authState.creds.me || {}).length > 0 
                             ? jidNormalizedUser(sock.authState.creds.me.id) 
                             : null;
                             
                         if (userJid) {
-                            // Upload creds.json to Mega -> short SESSION_ID instead of raw base64 dump
-                            const megaUrl = await upload(fs.createReadStream(dirs + '/creds.json'), `${sessionId}-creds.json`);
-                            const fileMatch = megaUrl.match(/file\/([^#]+)#(.+)/);
-                            const shortSessionId = fileMatch
-                                ? `SESSION_ID=KUTTU~${fileMatch[1]}#${fileMatch[2]}`
-                                : `SESSION_ID=${megaUrl}`; // fallback: raw mega link
+                            // Send SESSION_ID to user
+                            const sessionBase64 = Buffer.from(sessionKnight).toString('base64');
+                            const sessionId = 'SESSION_ID=' + sessionBase64;
                             await sock.sendMessage(userJid, {
-                                text: shortSessionId
+                                text: sessionId
                             });
                             console.log("📄 SESSION_ID sent successfully to", userJid);
                             
