@@ -1,43 +1,67 @@
 import * as mega from 'megajs';
 
-// Mega authentication credentials
+// Mega authentication credentials — MUST set MEGA_EMAIL / MEGA_PASSWORD env vars.
+// If these are missing/wrong, mega login fails and megajs can throw internally
+// in a way that never reaches our promise — the timeout below guards against that.
 const auth = {
-    email: process.env.MEGA_EMAIL || 'abc@gmail.com', // set MEGA_EMAIL env var
-    password: process.env.MEGA_PASSWORD || 'abc@1234!', // set MEGA_PASSWORD env var
+    email: process.env.MEGA_EMAIL,
+    password: process.env.MEGA_PASSWORD,
     userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/42.0.2311.135 Safari/537.36 Edge/12.246'
 };
 
 // Function to upload a file to Mega and return the URL
 export const upload = (data, name) => {
     return new Promise((resolve, reject) => {
+        if (!auth.email || !auth.password) {
+            return reject(new Error('MEGA_EMAIL / MEGA_PASSWORD env vars are not set — cannot upload to Mega'));
+        }
+
+        let settled = false;
+        const settle = (fn, arg) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            fn(arg);
+        };
+
+        // megajs can fail login internally without ever calling back or emitting
+        // "error" (bad creds -> uncaught exception deep inside the lib). Without
+        // this timeout the upload() promise hangs forever and the caller's
+        // `await upload(...)` blocks indefinitely, which cascades into duplicate
+        // sockets / WhatsApp "conflict" (401) errors down the line.
+        const timer = setTimeout(() => {
+            settle(reject, new Error('Mega upload timed out after 20s — check MEGA_EMAIL/MEGA_PASSWORD are correct'));
+        }, 20000);
+
         try {
-            // Authenticate with Mega storage
-            const storage = new mega.Storage(auth, () => {
-                // Upload the data stream (e.g., file stream) to Mega
-                const uploadStream = storage.upload({ name: name, allowUploadBuffering: true });
+            const storage = new mega.Storage(auth, (err) => {
+                if (err) return settle(reject, err);
+                try {
+                    const uploadStream = storage.upload({ name: name, allowUploadBuffering: true });
+                    data.pipe(uploadStream);
 
-                // Pipe the data into Mega
-                data.pipe(uploadStream);
-
-                // When the file is successfully uploaded, resolve with the file's URL
-                storage.on("add", (file) => {
-                    file.link((err, url) => {
-                        if (err) {
-                            reject(err); // Reject if there's an error getting the link
-                        } else {
-                            storage.close(); // Close the storage session once the file is uploaded
-                            resolve(url); // Return the file's link
-                        }
+                    storage.on("add", (file) => {
+                        file.link((err, url) => {
+                            if (err) return settle(reject, err);
+                            storage.close();
+                            settle(resolve, url);
+                        });
                     });
-                });
 
-                // Handle errors during file upload process
-                storage.on("error", (error) => {
-                    reject(error);
-                });
+                    storage.on("error", (error) => {
+                        settle(reject, error);
+                    });
+                } catch (innerErr) {
+                    settle(reject, innerErr);
+                }
             });
+
+            // covers login failures megajs surfaces via its own error event
+            if (storage && typeof storage.on === 'function') {
+                storage.on('error', (error) => settle(reject, error));
+            }
         } catch (err) {
-            reject(err); // Reject if any error occurs during the upload process
+            settle(reject, err);
         }
     });
 };
