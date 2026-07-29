@@ -12,10 +12,25 @@ const router = express.Router();
 // In-memory map so the frontend can poll for "linked" status + get the SESSION_ID
 // key -> { status: 'pending' | 'linked' | 'failed', sessionId?: string }
 const linkStatus = new Map();
+// key -> { sock, dirs } — tracks the live socket for each QR request so we can
+// cleanly kill it when the frontend regenerates a fresh QR (prevents stale/duplicate sockets)
+const activeSockets = new Map();
 
 router.get('/status/:key', (req, res) => {
     const s = linkStatus.get(req.params.key);
     res.send(s || { status: 'unknown' });
+});
+
+router.get('/cancel/:key', (req, res) => {
+    const key = req.params.key;
+    const entry = activeSockets.get(key);
+    if (entry) {
+        try { entry.sock.end(new Error('cancelled by client')); } catch (e) {}
+        removeFile(entry.dirs);
+        activeSockets.delete(key);
+    }
+    linkStatus.delete(key);
+    res.send({ ok: true });
 });
 
 // Function to remove files or directories
@@ -125,6 +140,7 @@ router.get('/', async (req, res) => {
 
             // Create socket and bind events
             let sock = makeWASocket(socketConfig);
+            activeSockets.set(sessionId, { sock, dirs });
             let reconnectAttempts = 0;
             const maxReconnectAttempts = 3;
 
@@ -166,7 +182,7 @@ router.get('/', async (req, res) => {
                             // Send video thumbnail with caption
                             await sock.sendMessage(userJid, {
                                 image: { url: 'https://img.youtube.com/vi/-oz_u1iMgf8/maxresdefault.jpg' },
-                                caption: `🎬 *KuttuBot MD V2.0 Full Setup Guide!*\n\n🚀 Bug Fixes + New Commands + Fast AI Chat\n📺 Watch Now: https://youtu.be/NjOipI2AoMk`
+                                caption: `🎬 *KnightBot MD V2.0 Full Setup Guide!*\n\n🚀 Bug Fixes + New Commands + Fast AI Chat\n📺 Watch Now: https://youtu.be/NjOipI2AoMk`
                             });
                             console.log("🎬 Video guide sent successfully");
                             
@@ -185,12 +201,20 @@ Copy the SESSION_ID above and paste it in your bot's environment variables.
                         }
                     } catch (error) {
                         console.error("Error sending session file:", error);
+                        linkStatus.set(sessionId, { status: 'failed', reason: error.message });
+                        // Don't leave a half-finished socket hanging around — it can
+                        // cause WhatsApp "conflict" (401) errors if a reconnect fires next.
+                        try { sock.end(error); } catch (e) {}
+                        activeSockets.delete(sessionId);
+                        removeFile(dirs);
+                        return;
                     }
                     
                     // Clean up session after successful connection and sending files
                     setTimeout(() => {
                         console.log('🧹 Cleaning up session...');
                         const deleted = removeFile(dirs);
+                        activeSockets.delete(sessionId);
                         if (deleted) {
                             console.log('✅ Session cleaned up successfully');
                         } else {
@@ -211,6 +235,7 @@ Copy the SESSION_ID above and paste it in your bot's environment variables.
                     if (statusCode === 401) {
                         console.log('🔐 Logged out - need new QR code');
                         linkStatus.set(sessionId, { status: 'failed' });
+                        activeSockets.delete(sessionId);
                         removeFile(dirs);
                     } else if (statusCode === 515 || statusCode === 503) {
                         console.log(`🔄 Stream error (${statusCode}) - attempting to reconnect...`);
@@ -222,6 +247,7 @@ Copy the SESSION_ID above and paste it in your bot's environment variables.
                             setTimeout(() => {
                                 try {
                                     sock = makeWASocket(socketConfig);
+                                    activeSockets.set(sessionId, { sock, dirs });
                                     sock.ev.on('connection.update', handleConnectionUpdate);
                                     sock.ev.on('creds.update', saveCreds);
                                 } catch (err) {
