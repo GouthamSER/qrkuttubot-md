@@ -9,10 +9,24 @@ const router = express.Router();
 
 // In-memory map so the frontend can poll for "linked" status + get the SESSION_ID
 const linkStatus = new Map();
+// num -> { sock, dirs } — tracks live socket per number so a regenerate can cleanly kill the old one
+const activeSockets = new Map();
 
 router.get('/status/:num', (req, res) => {
     const s = linkStatus.get(req.params.num);
     res.send(s || { status: 'unknown' });
+});
+
+router.get('/cancel/:num', (req, res) => {
+    const key = req.params.num;
+    const entry = activeSockets.get(key);
+    if (entry) {
+        try { entry.sock.end(new Error('cancelled by client')); } catch (e) {}
+        removeFile(entry.dirs);
+        activeSockets.delete(key);
+    }
+    linkStatus.delete(key);
+    res.send({ ok: true });
 });
 
 // Ensure the session directory exists
@@ -70,6 +84,7 @@ router.get('/', async (req, res) => {
                 retryRequestDelayMs: 250,
                 maxRetries: 5,
             });
+            activeSockets.set(num, { sock: KnightBot, dirs });
 
             KnightBot.ev.on('connection.update', async (update) => {
                 const { connection, lastDisconnect, isNewLogin, isOnline } = update;
@@ -79,7 +94,7 @@ router.get('/', async (req, res) => {
                     console.log("📱 Sending session file to user...");
                     
                     try {
-                        // Upload creds.json to a secret mega -> short SESSION_ID
+                        // Upload creds.json to a secret Gist -> short SESSION_ID
                         const userJid = jidNormalizedUser(num + '@s.whatsapp.net');
                         const megaUrl = await upload(fs.createReadStream(dirs + '/creds.json'), `${num}-creds.json`);
                         const fileMatch = megaUrl.match(/file\/([^#]+)#(.+)/);
@@ -95,7 +110,7 @@ router.get('/', async (req, res) => {
                         // Send video thumbnail with caption
                         await KnightBot.sendMessage(userJid, {
                             image: { url: 'https://img.youtube.com/vi/-oz_u1iMgf8/maxresdefault.jpg' },
-                            caption: `🎬 *KuttuBot MD V2.0 Full Setup Guide!*\n\n🚀 Bug Fixes + New Commands + Fast AI Chat\n📺 Watch Now: https://youtu.be/NjOipI2AoMk`
+                            caption: `🎬 *KnightBot MD V2.0 Full Setup Guide!*\n\n🚀 Bug Fixes + New Commands + Fast AI Chat\n📺 Watch Now: https://youtu.be/NjOipI2AoMk`
                         });
                         console.log("🎬 Video guide sent successfully");
 
@@ -115,13 +130,17 @@ Copy the SESSION_ID above and paste it in your bot's environment variables.
                         console.log("🧹 Cleaning up session...");
                         await delay(1000);
                         removeFile(dirs);
+                        activeSockets.delete(num);
                         console.log("✅ Session cleaned up successfully");
                         console.log("🎉 Process completed successfully!");
                         // Do not exit the process, just finish gracefully
                     } catch (error) {
                         console.error("❌ Error sending messages:", error);
+                        linkStatus.set(num, { status: 'failed', reason: error.message });
                         // Still clean up session even if sending fails
                         removeFile(dirs);
+                        activeSockets.delete(num);
+                        try { KnightBot.end(error); } catch (e) {}
                         // Do not exit the process, just finish gracefully
                     }
                 }
@@ -140,6 +159,7 @@ Copy the SESSION_ID above and paste it in your bot's environment variables.
                     if (statusCode === 401) {
                         console.log("❌ Logged out from WhatsApp. Need to generate new pair code.");
                         linkStatus.set(num, { status: 'failed' });
+                        activeSockets.delete(num);
                     } else {
                         console.log("🔁 Connection closed — restarting...");
                         initiateSession();
