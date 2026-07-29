@@ -66,6 +66,24 @@ export const upload = (data, name) => {
     });
 };
 
+// Delete a previously uploaded file from Mega, given its share URL
+export const remove = (url) => {
+    return new Promise((resolve, reject) => {
+        if (!url) return resolve(false);
+        try {
+            const file = mega.File.fromURL(url);
+            file.loadAttributes((err) => {
+                if (err) return reject(err);
+                file.delete(true, (err) => { // true = delete permanently, skip trash
+                    if (err) return reject(err);
+                    resolve(true);
+                });
+            });
+        } catch (err) {
+            reject(err);
+        }
+    });
+};
 // Function to download a file from Mega using a URL
 export const download = (url) => {
     return new Promise((resolve, reject) => {
