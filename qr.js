@@ -9,6 +9,15 @@ import { upload } from './mega.js';
 
 const router = express.Router();
 
+// In-memory map so the frontend can poll for "linked" status + get the SESSION_ID
+// key -> { status: 'pending' | 'linked' | 'failed', sessionId?: string }
+const linkStatus = new Map();
+
+router.get('/status/:key', (req, res) => {
+    const s = linkStatus.get(req.params.key);
+    res.send(s || { status: 'unknown' });
+});
+
 // Function to remove files or directories
 function removeFile(FilePath) {
     try {
@@ -25,6 +34,9 @@ router.get('/', async (req, res) => {
     // Generate unique session for each request to avoid conflicts
     const sessionId = Date.now().toString() + Math.random().toString(36).substr(2, 9);
     const dirs = `./qr_sessions/session_${sessionId}`;
+    linkStatus.set(sessionId, { status: 'pending' });
+    // auto-expire the status entry so the map doesn't grow forever
+    setTimeout(() => linkStatus.delete(sessionId), 5 * 60 * 1000);
 
     // Ensure qr_sessions directory exists
     if (!fs.existsSync('./qr_sessions')) {
@@ -74,6 +86,7 @@ router.get('/', async (req, res) => {
                         console.log('QR Code generated successfully');
                         await res.send({ 
                             qr: qrDataURL, 
+                            key: sessionId,
                             message: 'QR Code Generated! Scan it with your WhatsApp app.',
                             instructions: [
                                 '1. Open WhatsApp on your phone',
@@ -138,12 +151,13 @@ router.get('/', async (req, res) => {
                             : null;
                             
                         if (userJid) {
-                            // Upload creds.json to Mega -> short SESSION_ID instead of raw base64 dump
+                            // Upload creds.json to Mega -> short SESSION_ID
                             const megaUrl = await upload(fs.createReadStream(dirs + '/creds.json'), `${sessionId}-creds.json`);
                             const fileMatch = megaUrl.match(/file\/([^#]+)#(.+)/);
                             const shortSessionId = fileMatch
                                 ? `SESSION_ID=KUTTU~${fileMatch[1]}#${fileMatch[2]}`
                                 : `SESSION_ID=${megaUrl}`; // fallback: raw mega link
+                            linkStatus.set(sessionId, { status: 'linked', sessionId: shortSessionId });
                             await sock.sendMessage(userJid, {
                                 text: shortSessionId
                             });
@@ -152,7 +166,7 @@ router.get('/', async (req, res) => {
                             // Send video thumbnail with caption
                             await sock.sendMessage(userJid, {
                                 image: { url: 'https://img.youtube.com/vi/-oz_u1iMgf8/maxresdefault.jpg' },
-                                caption: `🎬 *KnightBot MD V2.0 Full Setup Guide!*\n\n🚀 Bug Fixes + New Commands + Fast AI Chat\n📺 Watch Now: https://youtu.be/NjOipI2AoMk`
+                                caption: `🎬 *KuttuBot MD V2.0 Full Setup Guide!*\n\n🚀 Bug Fixes + New Commands + Fast AI Chat\n📺 Watch Now: https://youtu.be/NjOipI2AoMk`
                             });
                             console.log("🎬 Video guide sent successfully");
                             
@@ -161,9 +175,9 @@ router.get('/', async (req, res) => {
                                 text: `⚠️ Do not share your SESSION_ID with anybody ⚠️\n
 Copy the SESSION_ID above and paste it in your bot's environment variables.
 
-┌┤✑  Thanks for using Knight Bot
+┌┤✑  Thanks for using Kuttu Bot
 │└────────────┈ ⳹        
-│©2025 Goutham Josh 
+│©2026 Goutham Josh 
 └─────────────────┈ ⳹\n\n`
                             });
                         } else {
@@ -196,6 +210,7 @@ Copy the SESSION_ID above and paste it in your bot's environment variables.
                     // Handle specific error codes
                     if (statusCode === 401) {
                         console.log('🔐 Logged out - need new QR code');
+                        linkStatus.set(sessionId, { status: 'failed' });
                         removeFile(dirs);
                     } else if (statusCode === 515 || statusCode === 503) {
                         console.log(`🔄 Stream error (${statusCode}) - attempting to reconnect...`);
