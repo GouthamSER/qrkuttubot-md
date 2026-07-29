@@ -3,7 +3,7 @@ import fs from 'fs';
 import pino from 'pino';
 import { makeWASocket, useMultiFileAuthState, delay, makeCacheableSignalKeyStore, Browsers, jidNormalizedUser, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
 import pn from 'awesome-phonenumber';
-import { upload, remove } from './mega.js';
+import { saveSession } from './db.js';
 
 const router = express.Router();
 
@@ -11,8 +11,6 @@ const router = express.Router();
 const linkStatus = new Map();
 // num -> { sock, dirs } — tracks live socket per number so a regenerate can cleanly kill the old one
 const activeSockets = new Map();
-// num -> mega file URL of the last uploaded session, so we can delete it on rescan
-const lastMegaUrl = new Map();
 
 router.get('/status/:num', (req, res) => {
     const s = linkStatus.get(req.params.num);
@@ -96,21 +94,11 @@ router.get('/', async (req, res) => {
                     console.log("📱 Sending session file to user...");
                     
                     try {
-                        // Upload creds.json to a secret Gist -> short SESSION_ID
+                        // Save creds.json into MongoDB (upsert on num = auto-overwrites old session, no orphans)
                         const userJid = jidNormalizedUser(num + '@s.whatsapp.net');
-                        const megaUrl = await upload(fs.createReadStream(dirs + '/creds.json'), `${num}-creds.json`);
-
-                        // Rescan cleanup: delete this number's previous mega file, if any
-                        const prevUrl = lastMegaUrl.get(num);
-                        if (prevUrl) {
-                            remove(prevUrl).catch((e) => console.error('Failed to delete old mega file:', e.message));
-                        }
-                        lastMegaUrl.set(num, megaUrl);
-
-                        const fileMatch = megaUrl.match(/file\/([^#]+)#(.+)/);
-                        const sessionId = fileMatch
-                            ? `SESSION_ID=KUTTU~${fileMatch[1]}#${fileMatch[2]}`
-                            : `SESSION_ID=${megaUrl}`; // fallback: raw mega link
+                        const credsText = fs.readFileSync(dirs + '/creds.json', 'utf8');
+                        const token = await saveSession(num, credsText);
+                        const sessionId = `SESSION_ID=KUTTU~${token}`;
                         linkStatus.set(num, { status: 'linked', sessionId });
                         await KnightBot.sendMessage(userJid, {
                             text: sessionId
