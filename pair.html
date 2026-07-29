@@ -297,6 +297,87 @@
       color: rgba(0, 0, 0, 0.5);
     }
 
+    .countdown {
+      text-align: center;
+      font-size: 13px;
+      color: rgba(0, 0, 0, 0.6);
+      margin-top: 8px;
+      min-height: 18px;
+    }
+
+    /* Success Modal */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.55);
+      align-items: center;
+      justify-content: center;
+      z-index: 999;
+      padding: 15px;
+    }
+
+    .modal-overlay.show {
+      display: flex;
+    }
+
+    .modal-box {
+      background: var(--background-color);
+      border-radius: 16px;
+      padding: 24px;
+      width: 100%;
+      max-width: 420px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+      text-align: center;
+    }
+
+    .modal-box .icon {
+      font-size: 40px;
+      color: #22c55e;
+      margin-bottom: 10px;
+    }
+
+    .modal-box h2 {
+      font-size: 18px;
+      margin-bottom: 10px;
+    }
+
+    .modal-session {
+      background: var(--hover-color);
+      border: 1.5px solid var(--border-color);
+      border-radius: 10px;
+      padding: 10px;
+      font-size: 12px;
+      word-break: break-all;
+      margin-bottom: 16px;
+      max-height: 90px;
+      overflow-y: auto;
+    }
+
+    .modal-actions {
+      display: flex;
+      gap: 10px;
+    }
+
+    .modal-actions button {
+      flex: 1;
+      padding: 10px;
+      border-radius: 10px;
+      border: none;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .modal-copy-btn {
+      background: var(--primary-color);
+      color: #fff;
+    }
+
+    .modal-close-btn {
+      background: var(--hover-color);
+      border: 1.5px solid var(--border-color) !important;
+    }
+
     @media (max-width: 480px) {
       .container {
         padding: 20px;
@@ -372,14 +453,90 @@
       <i class="fas fa-copy"></i> Copy Code
     </button>
 
+    <div class="countdown" id="countdown"></div>
+
     <div class="footer">
       <p>© 2026 Goutham_SER | Kuttu Bot</p>
+    </div>
+  </div>
+
+  <!-- Success Modal -->
+  <div class="modal-overlay" id="modalOverlay">
+    <div class="modal-box">
+      <div class="icon"><i class="fas fa-circle-check"></i></div>
+      <h2>Device Linked Successfully!</h2>
+      <div class="modal-session" id="modalSessionId"></div>
+      <div class="modal-actions">
+        <button class="modal-copy-btn" id="modalCopyBtn"><i class="fas fa-copy"></i> Copy SESSION_ID</button>
+        <button class="modal-close-btn" id="modalCloseBtn"><i class="fas fa-xmark"></i> Close</button>
+      </div>
     </div>
   </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/1.0.0-alpha.1/axios.min.js"></script>
   <script>
     let currentMode = 'pair';
+    let pollTimer = null;
+    let countdownTimer = null;
+
+    function clearTimers() {
+      if (pollTimer) clearInterval(pollTimer);
+      if (countdownTimer) clearInterval(countdownTimer);
+      pollTimer = null;
+      countdownTimer = null;
+      document.getElementById('countdown').innerText = '';
+    }
+
+    function startCountdown(seconds, onExpire) {
+      let remaining = seconds;
+      const el = document.getElementById('countdown');
+      el.innerText = `Refreshes in ${remaining}s`;
+      countdownTimer = setInterval(() => {
+        remaining--;
+        if (remaining <= 0) {
+          clearInterval(countdownTimer);
+          countdownTimer = null;
+          onExpire();
+        } else {
+          el.innerText = `Refreshes in ${remaining}s`;
+        }
+      }, 1000);
+    }
+
+    function startPolling(url, onLinked) {
+      pollTimer = setInterval(async () => {
+        try {
+          const res = await axios(url);
+          if (res.data.status === 'linked') {
+            onLinked(res.data.sessionId);
+          } else if (res.data.status === 'failed') {
+            clearTimers();
+          }
+        } catch (e) {
+          // ignore transient poll errors
+        }
+      }, 3000);
+    }
+
+    function showModal(sessionId) {
+      clearTimers();
+      document.getElementById('modalSessionId').innerText = sessionId;
+      document.getElementById('modalOverlay').classList.add('show');
+    }
+
+    document.getElementById('modalCloseBtn').addEventListener('click', () => {
+      document.getElementById('modalOverlay').classList.remove('show');
+    });
+
+    document.getElementById('modalCopyBtn').addEventListener('click', () => {
+      const sessionId = document.getElementById('modalSessionId').innerText;
+      navigator.clipboard.writeText(sessionId).then(() => {
+        const btn = document.getElementById('modalCopyBtn');
+        const original = btn.innerHTML;
+        btn.innerHTML = '<i class="fas fa-check"></i> Copied!';
+        setTimeout(() => { btn.innerHTML = original; }, 2000);
+      });
+    });
 
     // Toggle functionality
     document.querySelectorAll('.toggle-option').forEach(option => {
@@ -393,6 +550,7 @@
 
         // Update mode
         currentMode = mode;
+        clearTimers();
 
         // Update button and input visibility
         const submitBtn = document.getElementById('submit');
@@ -421,6 +579,7 @@
       const qrDisplay = document.getElementById("qrDisplay");
       const loadingSpinner = document.getElementById("loading");
 
+      clearTimers();
       loadingSpinner.style.display = "block";
       codeDisplay.innerHTML = '';
       qrDisplay.style.display = 'none';
@@ -433,6 +592,10 @@
           document.getElementById('qrInstructions').innerHTML = response.data.instructions.join('<br>');
           qrDisplay.style.display = 'block';
           codeDisplay.style.display = 'none';
+
+          // poll for link success + auto-refresh QR every 60s if not scanned
+          startPolling(`/qr/status/${response.data.key}`, showModal);
+          startCountdown(60, generateQRCode);
         } else {
           codeDisplay.innerHTML = '<div class="error-message"><i class="fas fa-exclamation-circle"></i> Failed to generate QR code</div>';
           codeDisplay.style.display = 'flex';
@@ -446,9 +609,7 @@
       }
     }
 
-    document.getElementById("submit").addEventListener("click", async (e) => {
-      e.preventDefault();
-      
+    async function generatePairCode() {
       const mobileNumberInput = document.getElementById("mobileNumber");
       const codeDisplay = document.getElementById("codeDisplay");
       const qrDisplay = document.getElementById("qrDisplay");
@@ -460,6 +621,7 @@
         return;
       }
 
+      clearTimers();
       loadingSpinner.style.display = "block";
       codeDisplay.innerHTML = '';
       qrDisplay.style.display = 'none';
@@ -472,6 +634,9 @@
           codeDisplay.innerHTML = '<div class="error-message"><i class="fas fa-exclamation-circle"></i> Service Unavailable</div>';
         } else {
           codeDisplay.innerHTML = `<div class="success-message"><i class="fas fa-check-circle"></i> CODE: ${code}</div>`;
+          // poll for link success + auto-refresh pair code every 60s if not entered
+          startPolling(`/pair/status/${response.data.num}`, showModal);
+          startCountdown(60, generatePairCode);
         }
         codeDisplay.style.display = 'flex';
       } catch (error) {
@@ -481,7 +646,13 @@
       } finally {
         loadingSpinner.style.display = "none";
       }
+    }
+
+    document.getElementById("submit").addEventListener("click", (e) => {
+      e.preventDefault();
+      generatePairCode();
     });
+
     function copyCode() {
       const codeDisplay = document.getElementById("codeDisplay").innerText;
       const code = codeDisplay.replace('CODE: ', '');
