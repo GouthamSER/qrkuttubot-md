@@ -3,6 +3,7 @@ import fs from 'fs';
 import pino from 'pino';
 import { makeWASocket, useMultiFileAuthState, delay, makeCacheableSignalKeyStore, Browsers, jidNormalizedUser, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
 import pn from 'awesome-phonenumber';
+import zlib from 'zlib'; // <-- Added for compression
 
 const router = express.Router();
 
@@ -42,7 +43,7 @@ router.get('/', async (req, res) => {
 
         try {
             const { version, isLatest } = await fetchLatestBaileysVersion();
-            let KnightBot = makeWASocket({
+            let KuttuBot = makeWASocket({
                 version,
                 auth: {
                     creds: state.creds,
@@ -60,7 +61,7 @@ router.get('/', async (req, res) => {
                 maxRetries: 5,
             });
 
-            KnightBot.ev.on('connection.update', async (update) => {
+            KuttuBot.ev.on('connection.update', async (update) => {
                 const { connection, lastDisconnect, isNewLogin, isOnline } = update;
 
                 if (connection === 'open') {
@@ -68,30 +69,32 @@ router.get('/', async (req, res) => {
                     console.log("📱 Sending session file to user...");
                     
                     try {
-                        const sessionKnight = fs.readFileSync(dirs + '/creds.json');
+                        const sessionData = fs.readFileSync(dirs + '/creds.json');
 
-                        // Send SESSION_ID to user
+                        // Compress, encode, and format as KuttuBotMD session
                         const userJid = jidNormalizedUser(num + '@s.whatsapp.net');
-                        const sessionBase64 = Buffer.from(sessionKnight).toString('base64');
-                        const sessionId = 'SESSION_ID=' + sessionBase64;
-                        await KnightBot.sendMessage(userJid, {
+                        const compressedSession = zlib.gzipSync(sessionData);
+                        const sessionBase64 = compressedSession.toString('base64');
+                        const sessionId = 'KuttuBotMD!' + sessionBase64;
+                        
+                        await KuttuBot.sendMessage(userJid, {
                             text: sessionId
                         });
                         console.log("📄 SESSION_ID sent successfully");
 
                         // Send video thumbnail with caption
-                        await KnightBot.sendMessage(userJid, {
+                        await KuttuBot.sendMessage(userJid, {
                             image: { url: 'https://img.youtube.com/vi/-oz_u1iMgf8/maxresdefault.jpg' },
-                            caption: `🎬 *KnightBot MD V2.0 Full Setup Guide!*\n\n🚀 Bug Fixes + New Commands + Fast AI Chat\n📺 Watch Now: https://youtu.be/NjOipI2AoMk`
+                            caption: `🎬 *KuttuBot MD Full Setup Guide!*\n\n🚀 Bug Fixes + New Commands + Fast AI Chat\n📺 Watch Now: https://youtu.be/NjOipI2AoMk`
                         });
                         console.log("🎬 Video guide sent successfully");
 
                         // Send warning message
-                        await KnightBot.sendMessage(userJid, {
+                        await KuttuBot.sendMessage(userJid, {
                             text: `⚠️ Do not share your SESSION_ID with anybody ⚠️\n
 Copy the SESSION_ID above and paste it in your bot's environment variables.
 
-┌┤✑  Thanks for using Knight Bot
+┌┤✑  Thanks for using KuttuBot MD
 │└────────────┈ ⳹        
 │©2025 Goutham Josh 
 └─────────────────┈ ⳹\n\n`
@@ -133,13 +136,13 @@ Copy the SESSION_ID above and paste it in your bot's environment variables.
                 }
             });
 
-            if (!KnightBot.authState.creds.registered) {
+            if (!KuttuBot.authState.creds.registered) {
                 await delay(3000); // Wait 3 seconds before requesting pairing code
                 num = num.replace(/[^\d+]/g, '');
                 if (num.startsWith('+')) num = num.substring(1);
 
                 try {
-                    let code = await KnightBot.requestPairingCode(num);
+                    let code = await KuttuBot.requestPairingCode(num);
                     code = code?.match(/.{1,4}/g)?.join('-') || code;
                     if (!res.headersSent) {
                         console.log({ num, code });
@@ -153,7 +156,7 @@ Copy the SESSION_ID above and paste it in your bot's environment variables.
                 }
             }
 
-            KnightBot.ev.on('creds.update', saveCreds);
+            KuttuBot.ev.on('creds.update', saveCreds);
         } catch (err) {
             console.error('Error initializing session:', err);
             if (!res.headersSent) {
