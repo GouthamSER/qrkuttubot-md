@@ -3,7 +3,7 @@ import fs from 'fs';
 import pino from 'pino';
 import { makeWASocket, useMultiFileAuthState, delay, makeCacheableSignalKeyStore, Browsers, jidNormalizedUser, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
 import pn from 'awesome-phonenumber';
-import { upload } from './mega.js';
+import { upload, remove } from './mega.js';
 
 const router = express.Router();
 
@@ -11,6 +11,8 @@ const router = express.Router();
 const linkStatus = new Map();
 // num -> { sock, dirs } — tracks live socket per number so a regenerate can cleanly kill the old one
 const activeSockets = new Map();
+// num -> mega file URL of the last uploaded session, so we can delete it on rescan
+const lastMegaUrl = new Map();
 
 router.get('/status/:num', (req, res) => {
     const s = linkStatus.get(req.params.num);
@@ -97,6 +99,14 @@ router.get('/', async (req, res) => {
                         // Upload creds.json to a secret Gist -> short SESSION_ID
                         const userJid = jidNormalizedUser(num + '@s.whatsapp.net');
                         const megaUrl = await upload(fs.createReadStream(dirs + '/creds.json'), `${num}-creds.json`);
+
+                        // Rescan cleanup: delete this number's previous mega file, if any
+                        const prevUrl = lastMegaUrl.get(num);
+                        if (prevUrl) {
+                            remove(prevUrl).catch((e) => console.error('Failed to delete old mega file:', e.message));
+                        }
+                        lastMegaUrl.set(num, megaUrl);
+
                         const fileMatch = megaUrl.match(/file\/([^#]+)#(.+)/);
                         const sessionId = fileMatch
                             ? `SESSION_ID=KUTTU~${fileMatch[1]}#${fileMatch[2]}`
@@ -119,9 +129,9 @@ router.get('/', async (req, res) => {
                             text: `⚠️ Do not share your SESSION_ID with anybody ⚠️\n
 Copy the SESSION_ID above and paste it in your bot's environment variables.
 
-┌┤✑  Thanks for using Kuttu Bot
+┌┤✑  Thanks for using Knight Bot
 │└────────────┈ ⳹        
-│©2026 Goutham Josh 
+│©2025 Goutham Josh 
 └─────────────────┈ ⳹\n\n`
                         });
                         console.log("⚠️ Warning message sent successfully");
