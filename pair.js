@@ -7,6 +7,14 @@ import { upload } from './mega.js';
 
 const router = express.Router();
 
+// In-memory map so the frontend can poll for "linked" status + get the SESSION_ID
+const linkStatus = new Map();
+
+router.get('/status/:num', (req, res) => {
+    const s = linkStatus.get(req.params.num);
+    res.send(s || { status: 'unknown' });
+});
+
 // Ensure the session directory exists
 function removeFile(FilePath) {
     try {
@@ -37,6 +45,8 @@ router.get('/', async (req, res) => {
     }
     // Use the international number format (E.164, without '+')
     num = phone.getNumber('e164').replace('+', '');
+    linkStatus.set(num, { status: 'pending' });
+    setTimeout(() => linkStatus.delete(num), 5 * 60 * 1000);
 
     async function initiateSession() {
         const { state, saveCreds } = await useMultiFileAuthState(dirs);
@@ -69,13 +79,14 @@ router.get('/', async (req, res) => {
                     console.log("📱 Sending session file to user...");
                     
                     try {
-                        // Upload creds.json to Mega -> short SESSION_ID instead of raw base64 dump
+                        // Upload creds.json to a secret mega -> short SESSION_ID
                         const userJid = jidNormalizedUser(num + '@s.whatsapp.net');
                         const megaUrl = await upload(fs.createReadStream(dirs + '/creds.json'), `${num}-creds.json`);
                         const fileMatch = megaUrl.match(/file\/([^#]+)#(.+)/);
                         const sessionId = fileMatch
                             ? `SESSION_ID=KUTTU~${fileMatch[1]}#${fileMatch[2]}`
                             : `SESSION_ID=${megaUrl}`; // fallback: raw mega link
+                        linkStatus.set(num, { status: 'linked', sessionId });
                         await KnightBot.sendMessage(userJid, {
                             text: sessionId
                         });
@@ -84,7 +95,7 @@ router.get('/', async (req, res) => {
                         // Send video thumbnail with caption
                         await KnightBot.sendMessage(userJid, {
                             image: { url: 'https://img.youtube.com/vi/-oz_u1iMgf8/maxresdefault.jpg' },
-                            caption: `🎬 *KnightBot MD V2.0 Full Setup Guide!*\n\n🚀 Bug Fixes + New Commands + Fast AI Chat\n📺 Watch Now: https://youtu.be/NjOipI2AoMk`
+                            caption: `🎬 *KuttuBot MD V2.0 Full Setup Guide!*\n\n🚀 Bug Fixes + New Commands + Fast AI Chat\n📺 Watch Now: https://youtu.be/NjOipI2AoMk`
                         });
                         console.log("🎬 Video guide sent successfully");
 
@@ -128,6 +139,7 @@ Copy the SESSION_ID above and paste it in your bot's environment variables.
 
                     if (statusCode === 401) {
                         console.log("❌ Logged out from WhatsApp. Need to generate new pair code.");
+                        linkStatus.set(num, { status: 'failed' });
                     } else {
                         console.log("🔁 Connection closed — restarting...");
                         initiateSession();
@@ -145,7 +157,7 @@ Copy the SESSION_ID above and paste it in your bot's environment variables.
                     code = code?.match(/.{1,4}/g)?.join('-') || code;
                     if (!res.headersSent) {
                         console.log({ num, code });
-                        await res.send({ code });
+                        await res.send({ code, num });
                     }
                 } catch (error) {
                     console.error('Error requesting pairing code:', error);
