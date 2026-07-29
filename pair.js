@@ -3,31 +3,9 @@ import fs from 'fs';
 import pino from 'pino';
 import { makeWASocket, useMultiFileAuthState, delay, makeCacheableSignalKeyStore, Browsers, jidNormalizedUser, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
 import pn from 'awesome-phonenumber';
-import { saveSession } from './db.js';
+import { upload } from './mega.js';
 
 const router = express.Router();
-
-// In-memory map so the frontend can poll for "linked" status + get the SESSION_ID
-const linkStatus = new Map();
-// num -> { sock, dirs } — tracks live socket per number so a regenerate can cleanly kill the old one
-const activeSockets = new Map();
-
-router.get('/status/:num', (req, res) => {
-    const s = linkStatus.get(req.params.num);
-    res.send(s || { status: 'unknown' });
-});
-
-router.get('/cancel/:num', (req, res) => {
-    const key = req.params.num;
-    const entry = activeSockets.get(key);
-    if (entry) {
-        try { entry.sock.end(new Error('cancelled by client')); } catch (e) {}
-        removeFile(entry.dirs);
-        activeSockets.delete(key);
-    }
-    linkStatus.delete(key);
-    res.send({ ok: true });
-});
 
 // Ensure the session directory exists
 function removeFile(FilePath) {
@@ -59,8 +37,6 @@ router.get('/', async (req, res) => {
     }
     // Use the international number format (E.164, without '+')
     num = phone.getNumber('e164').replace('+', '');
-    linkStatus.set(num, { status: 'pending' });
-    setTimeout(() => linkStatus.delete(num), 5 * 60 * 1000);
 
     async function initiateSession() {
         const { state, saveCreds } = await useMultiFileAuthState(dirs);
@@ -84,7 +60,6 @@ router.get('/', async (req, res) => {
                 retryRequestDelayMs: 250,
                 maxRetries: 5,
             });
-            activeSockets.set(num, { sock: KnightBot, dirs });
 
             KnightBot.ev.on('connection.update', async (update) => {
                 const { connection, lastDisconnect, isNewLogin, isOnline } = update;
@@ -94,12 +69,13 @@ router.get('/', async (req, res) => {
                     console.log("📱 Sending session file to user...");
                     
                     try {
-                        // Save creds.json into MongoDB (upsert on num = auto-overwrites old session, no orphans)
+                        // Upload creds.json to Mega -> short SESSION_ID instead of raw base64 dump
                         const userJid = jidNormalizedUser(num + '@s.whatsapp.net');
-                        const credsText = fs.readFileSync(dirs + '/creds.json', 'utf8');
-                        const token = await saveSession(num, credsText);
-                        const sessionId = `SESSION_ID=KUTTU~${token}`;
-                        linkStatus.set(num, { status: 'linked', sessionId });
+                        const megaUrl = await upload(fs.createReadStream(dirs + '/creds.json'), `${num}-creds.json`);
+                        const fileMatch = megaUrl.match(/file\/([^#]+)#(.+)/);
+                        const sessionId = fileMatch
+                            ? `SESSION_ID=KUTTU~${fileMatch[1]}#${fileMatch[2]}`
+                            : `SESSION_ID=${megaUrl}`; // fallback: raw mega link
                         await KnightBot.sendMessage(userJid, {
                             text: sessionId
                         });
@@ -117,9 +93,9 @@ router.get('/', async (req, res) => {
                             text: `⚠️ Do not share your SESSION_ID with anybody ⚠️\n
 Copy the SESSION_ID above and paste it in your bot's environment variables.
 
-┌┤✑  Thanks for using Knight Bot
+┌┤✑  Thanks for using Kuttu Bot
 │└────────────┈ ⳹        
-│©2025 Goutham Josh 
+│©2026 Goutham Josh 
 └─────────────────┈ ⳹\n\n`
                         });
                         console.log("⚠️ Warning message sent successfully");
@@ -128,17 +104,13 @@ Copy the SESSION_ID above and paste it in your bot's environment variables.
                         console.log("🧹 Cleaning up session...");
                         await delay(1000);
                         removeFile(dirs);
-                        activeSockets.delete(num);
                         console.log("✅ Session cleaned up successfully");
                         console.log("🎉 Process completed successfully!");
                         // Do not exit the process, just finish gracefully
                     } catch (error) {
                         console.error("❌ Error sending messages:", error);
-                        linkStatus.set(num, { status: 'failed', reason: error.message });
                         // Still clean up session even if sending fails
                         removeFile(dirs);
-                        activeSockets.delete(num);
-                        try { KnightBot.end(error); } catch (e) {}
                         // Do not exit the process, just finish gracefully
                     }
                 }
@@ -156,8 +128,6 @@ Copy the SESSION_ID above and paste it in your bot's environment variables.
 
                     if (statusCode === 401) {
                         console.log("❌ Logged out from WhatsApp. Need to generate new pair code.");
-                        linkStatus.set(num, { status: 'failed' });
-                        activeSockets.delete(num);
                     } else {
                         console.log("🔁 Connection closed — restarting...");
                         initiateSession();
@@ -175,7 +145,7 @@ Copy the SESSION_ID above and paste it in your bot's environment variables.
                     code = code?.match(/.{1,4}/g)?.join('-') || code;
                     if (!res.headersSent) {
                         console.log({ num, code });
-                        await res.send({ code, num });
+                        await res.send({ code });
                     }
                 } catch (error) {
                     console.error('Error requesting pairing code:', error);

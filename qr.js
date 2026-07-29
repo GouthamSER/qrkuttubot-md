@@ -5,45 +5,9 @@ import { makeWASocket, useMultiFileAuthState, makeCacheableSignalKeyStore, Brows
 import { delay } from '@whiskeysockets/baileys';
 import QRCode from 'qrcode';
 import qrcodeTerminal from 'qrcode-terminal';
-import { saveSession, loadSession } from './db.js';
+import { upload } from './mega.js';
 
 const router = express.Router();
-
-// In-memory map so the frontend can poll for "linked" status + get the SESSION_ID
-// key -> { status: 'pending' | 'linked' | 'failed', sessionId?: string }
-const linkStatus = new Map();
-// key -> { sock, dirs } — tracks the live socket for each QR request so we can
-// cleanly kill it when the frontend regenerates a fresh QR (prevents stale/duplicate sockets)
-const activeSockets = new Map();
-
-router.get('/status/:key', (req, res) => {
-    const s = linkStatus.get(req.params.key);
-    res.send(s || { status: 'unknown' });
-});
-
-// Public endpoint the MAIN BOT calls to fetch its session — this is the only
-// place that needs MONGODB_URI. Main bot just does a plain https GET here,
-// no mongo driver/uri needed on that side at all.
-router.get('/session/:token', async (req, res) => {
-    try {
-        const creds = await loadSession(req.params.token);
-        res.send({ creds });
-    } catch (e) {
-        res.status(404).send({ error: e.message });
-    }
-});
-
-router.get('/cancel/:key', (req, res) => {
-    const key = req.params.key;
-    const entry = activeSockets.get(key);
-    if (entry) {
-        try { entry.sock.end(new Error('cancelled by client')); } catch (e) {}
-        removeFile(entry.dirs);
-        activeSockets.delete(key);
-    }
-    linkStatus.delete(key);
-    res.send({ ok: true });
-});
 
 // Function to remove files or directories
 function removeFile(FilePath) {
@@ -61,9 +25,6 @@ router.get('/', async (req, res) => {
     // Generate unique session for each request to avoid conflicts
     const sessionId = Date.now().toString() + Math.random().toString(36).substr(2, 9);
     const dirs = `./qr_sessions/session_${sessionId}`;
-    linkStatus.set(sessionId, { status: 'pending' });
-    // auto-expire the status entry so the map doesn't grow forever
-    setTimeout(() => linkStatus.delete(sessionId), 5 * 60 * 1000);
 
     // Ensure qr_sessions directory exists
     if (!fs.existsSync('./qr_sessions')) {
@@ -113,7 +74,6 @@ router.get('/', async (req, res) => {
                         console.log('QR Code generated successfully');
                         await res.send({ 
                             qr: qrDataURL, 
-                            key: sessionId,
                             message: 'QR Code Generated! Scan it with your WhatsApp app.',
                             instructions: [
                                 '1. Open WhatsApp on your phone',
@@ -152,7 +112,6 @@ router.get('/', async (req, res) => {
 
             // Create socket and bind events
             let sock = makeWASocket(socketConfig);
-            activeSockets.set(sessionId, { sock, dirs });
             let reconnectAttempts = 0;
             const maxReconnectAttempts = 3;
 
@@ -179,11 +138,12 @@ router.get('/', async (req, res) => {
                             : null;
                             
                         if (userJid) {
-                            // Save creds.json into MongoDB (upsert on userJid = auto-overwrites old session)
-                            const credsText = fs.readFileSync(dirs + '/creds.json', 'utf8');
-                            const token = await saveSession(userJid, credsText);
-                            const shortSessionId = `SESSION_ID=KUTTU~${token}`;
-                            linkStatus.set(sessionId, { status: 'linked', sessionId: shortSessionId });
+                            // Upload creds.json to Mega -> short SESSION_ID instead of raw base64 dump
+                            const megaUrl = await upload(fs.createReadStream(dirs + '/creds.json'), `${sessionId}-creds.json`);
+                            const fileMatch = megaUrl.match(/file\/([^#]+)#(.+)/);
+                            const shortSessionId = fileMatch
+                                ? `SESSION_ID=KUTTU~${fileMatch[1]}#${fileMatch[2]}`
+                                : `SESSION_ID=${megaUrl}`; // fallback: raw mega link
                             await sock.sendMessage(userJid, {
                                 text: shortSessionId
                             });
@@ -211,20 +171,12 @@ Copy the SESSION_ID above and paste it in your bot's environment variables.
                         }
                     } catch (error) {
                         console.error("Error sending session file:", error);
-                        linkStatus.set(sessionId, { status: 'failed', reason: error.message });
-                        // Don't leave a half-finished socket hanging around — it can
-                        // cause WhatsApp "conflict" (401) errors if a reconnect fires next.
-                        try { sock.end(error); } catch (e) {}
-                        activeSockets.delete(sessionId);
-                        removeFile(dirs);
-                        return;
                     }
                     
                     // Clean up session after successful connection and sending files
                     setTimeout(() => {
                         console.log('🧹 Cleaning up session...');
                         const deleted = removeFile(dirs);
-                        activeSockets.delete(sessionId);
                         if (deleted) {
                             console.log('✅ Session cleaned up successfully');
                         } else {
@@ -244,8 +196,6 @@ Copy the SESSION_ID above and paste it in your bot's environment variables.
                     // Handle specific error codes
                     if (statusCode === 401) {
                         console.log('🔐 Logged out - need new QR code');
-                        linkStatus.set(sessionId, { status: 'failed' });
-                        activeSockets.delete(sessionId);
                         removeFile(dirs);
                     } else if (statusCode === 515 || statusCode === 503) {
                         console.log(`🔄 Stream error (${statusCode}) - attempting to reconnect...`);
@@ -257,7 +207,6 @@ Copy the SESSION_ID above and paste it in your bot's environment variables.
                             setTimeout(() => {
                                 try {
                                     sock = makeWASocket(socketConfig);
-                                    activeSockets.set(sessionId, { sock, dirs });
                                     sock.ev.on('connection.update', handleConnectionUpdate);
                                     sock.ev.on('creds.update', saveCreds);
                                 } catch (err) {
